@@ -74,6 +74,7 @@ public class SetupPickerPlugin extends Plugin
 	private PickerInput input;
 
 	private final AtomicBoolean refreshQueued = new AtomicBoolean();
+	private final RecentTagTracker recentTagTracker = new RecentTagTracker();
 
 	@Override
 	public void configure(Binder binder)
@@ -97,7 +98,13 @@ public class SetupPickerPlugin extends Plugin
 		keyManager.registerKeyListener(input);
 
 		queueRefresh();
-		clientThread.invokeLater(() -> model.setActiveSetup(repository.queryActiveSetup()));
+		clientThread.invokeLater(() ->
+		{
+			recentTagTracker.reset();
+			final String active = repository.queryActiveSetup();
+			recentTagTracker.observe(active, false);
+			model.setActiveSetup(active);
+		});
 	}
 
 	@Override
@@ -135,6 +142,7 @@ public class SetupPickerPlugin extends Plugin
 	@Subscribe
 	public void onProfileChanged(ProfileChanged event)
 	{
+		clientThread.invokeLater(recentTagTracker::reset);
 		overlay.invalidateTheme();
 		queueRefresh();
 	}
@@ -171,7 +179,12 @@ public class SetupPickerPlugin extends Plugin
 	public void onClientTick(ClientTick event)
 	{
 		chatboxKeyGuard.sync(model.view().isSearchFocused());
-		model.setActiveSetup(repository.queryActiveSetup());
+		final String active = repository.queryActiveSetup();
+		model.setActiveSetup(active);
+		if (recentTagTracker.observe(active, config.recentCount() > 0))
+		{
+			recordRecent(active);
+		}
 	}
 
 	@Subscribe
@@ -180,6 +193,7 @@ public class SetupPickerPlugin extends Plugin
 		// Nothing is drawn outside the game, so don't leave the keyboard captured by an invisible popup
 		if (event.getGameState() != GameState.LOGGED_IN)
 		{
+			recentTagTracker.reset();
 			model.resetSearch();
 		}
 	}
@@ -199,16 +213,22 @@ public class SetupPickerPlugin extends Plugin
 		{
 			repository.open(setup.getName());
 			model.setActiveSetup(setup.getName());
+			recentTagTracker.observe(repository.queryActiveSetup(), false);
 			if (config.recentCount() > 0)
 			{
-				final List<String> recent = repository.loadRecent();
-				final List<String> updated = SetupRepository.markUsed(recent, setup.getName());
-				if (updated != recent)
-				{
-					repository.saveRecent(updated);
-				}
+				recordRecent(setup.getName());
 			}
 		});
+	}
+
+	private void recordRecent(String name)
+	{
+		final List<String> recent = repository.loadRecent();
+		final List<String> updated = SetupRepository.markUsed(recent, name);
+		if (updated != recent)
+		{
+			repository.saveRecent(updated);
+		}
 	}
 
 	void setCollapsed(boolean collapsed)

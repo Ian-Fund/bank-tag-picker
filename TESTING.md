@@ -20,12 +20,13 @@ The first command checks the existing tests and builds the JAR. The second start
 5. Open the already selected tag again and confirm it stays open.
 6. Check Escape and Ctrl+G close the picker and restore normal typing.
 7. If enabled, check the searchable list beside the bank, mouse selection, and current-tag highlight.
+   Set **Recently used** to 5. Click two different standard Bank Tags tabs, then open the picker and confirm the last clicked tag is first with a clock. Switch back to the first tag and confirm it moves to the top without duplicates. Leave a tag open and confirm the order stays stable. Set Recently used to 0 and confirm further clicks do not change history. Switch profiles and confirm an already active tag is not added just by switching.
 8. Inspect icon.png and docs/icons/icon-16.png for legibility. The Plugin Hub icon cannot be verified through a Hub listing until the plugin is submitted. This local package adds no sidebar button or custom configuration-list icon.
 
 ## Changes in this package
 
-Version is 0.2.1. This release keeps the v0.2 features and selected icon, caches normalized search names, reuses fuzzy-matching buffers and unchanged drawing state, and avoids tag reloads for appearance settings. Author: Ian-Fund. The README credits akump for the inspiration and base code and discloses AI assistance.
+Version is 0.2.2. This release adds recent-history tracking for tags opened through the standard Bank Tags tabs, reusing the existing active-tag check. It keeps the v0.2 features, selected icon, and v0.2.1 optimizations. Author: Ian-Fund. The README credits akump for the inspiration and base code and discloses AI assistance.
 
-Local verification uses JDK 21.0.12 / Gradle 8.10 and cached dependencies. Existing tests and additional matching, snapshot, geometry, and live color tests cover the optimization changes. See PERFORMANCE.md for results. In-game interactions still require the manual pass above.
+Local verification uses JDK 21.0.12 / Gradle 8.10 and cached dependencies. Tests cover native tag transitions, repeated ticks without repeated history reads/writes, disabled tracking, empty active tags, profile resets, and picker selection deduplication, plus the existing matching, snapshot, geometry, and live color checks. See PERFORMANCE.md for the v0.2.1 optimization results. In-game interactions still require the manual pass above.
 
 After this update, especially recheck fuzzy search, live color changes, window resizing, popup row count, bank-side width/position, collapse/expand, profile switching, and recent tag ordering.

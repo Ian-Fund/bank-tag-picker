@@ -22,7 +22,7 @@ dependencies {
 }
 
 group = 'com.setuppicker'
-version = '0.2.1'
+version = '0.2.2'
 
 tasks.withType(JavaCompile) {
 	options.encoding = 'UTF-8'

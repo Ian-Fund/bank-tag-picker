@@ -39,13 +39,15 @@ Layouts do not need special entries in the picker. A tag appears once; when it i
 
 The default hotkey is **G** with **Require Ctrl/Cmd** enabled, giving Ctrl+G on Windows/Linux and Cmd+G on macOS. The hotkey, popup size, sorting, fuzzy search, recent tags, bank-side list, and colors can all be customized.
 
+Set **Recently used** above 0 to show recent tags at the top. Tags opened through the picker or the standard Bank Tags tabs update the same history, latest first, without duplicates. A value of 0 disables tracking. Restored active tags at startup or after a profile switch do not count as a new selection.
+
 ## Development
 
 `./gradlew runClient` starts RuneLite in developer mode with the plugin loaded.
 
 `./gradlew test` runs the picker tests, including matching equivalence and rendering cache checks. Keyboard tests use the Ctrl+G / Cmd+G shortcut. Some tested Inventory Setups helpers remain in the code but are not used by the Bank Tag runtime path.
 
-Version **0.2.1** reduces repeated search and drawing allocations while preserving the v0.2 controls and Bank Tags behavior. See [PERFORMANCE.md](PERFORMANCE.md) for the changes, measurements, and limits.
+Version **0.2.2** also tracks recent tags opened through the standard Bank Tags interface. It retains the search and drawing optimizations from v0.2.1. See [PERFORMANCE.md](PERFORMANCE.md) for the changes, measurements, and limits.
 
 For Windows commands and the final local checklist, see [TESTING.md](TESTING.md).
 
