@@ -1,0 +1,360 @@
+package com.setuppicker;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import java.awt.Color;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import net.runelite.api.EquipmentInventorySlot;
+import net.runelite.api.gameval.ItemID;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.plugins.banktags.BankTagsService;
+import net.runelite.client.util.Text;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Reads RuneLite Bank Tag tabs from the same config used by the built-in Bank Tags plugin and opens them
+ * through BankTagsService. BankTagsService also applies any saved layout associated with the selected tag.
+ *
+ * Some legacy Inventory Setups parsing helpers remain for now because the original picker tests exercise them;
+ * the runtime Bank Tag picker does not use those helpers.
+ */
+@Singleton
+public class SetupRepository
+{
+	private static final Logger log = LoggerFactory.getLogger(SetupRepository.class);
+
+	static final String CONFIG_GROUP = "inventorysetups";
+	static final String BANK_TAGS_CONFIG_GROUP = "banktags";
+	static final String BANK_TAGS_TABS_KEY = "tagtabs";
+	static final String BANK_TAGS_ICON_PREFIX = "icon_";
+	private static final int MAX_RECENT = 10;
+
+	// and all the sections together, as a json array
+	static final String CONFIG_KEY_SECTIONS = "sections";
+
+	private final ConfigManager configManager;
+	private final Gson gson;
+	private final BankTagsService bankTagsService;
+
+	@Inject
+	SetupRepository(ConfigManager configManager, Gson gson, BankTagsService bankTagsService)
+	{
+		this.configManager = configManager;
+		this.gson = gson;
+		this.bankTagsService = bankTagsService;
+	}
+
+	/**
+	 * All Bank Tag tabs.
+	 *
+	 * @param alphabetical sort by name, rather than keeping RuneLite's Bank Tag tab order
+	 */
+	public List<SetupEntry> loadSetups(boolean alphabetical, boolean favoritesFirst)
+	{
+		final String savedTabs = configManager.getConfiguration(BANK_TAGS_CONFIG_GROUP, BANK_TAGS_TABS_KEY);
+		final List<String> names = Text.fromCSV(savedTabs == null ? "" : savedTabs);
+		final List<SetupEntry> setups = new ArrayList<>(names.size());
+		for (String name : names)
+		{
+			final String iconValue = configManager.getConfiguration(
+				BANK_TAGS_CONFIG_GROUP, BANK_TAGS_ICON_PREFIX + Text.standardize(name));
+			int iconItemId = ItemID.SPADE;
+			try
+			{
+				if (iconValue != null)
+				{
+					iconItemId = Integer.parseInt(iconValue);
+				}
+			}
+			catch (NumberFormatException ignored)
+			{
+				// Match RuneLite Bank Tags' fallback icon behavior.
+			}
+			setups.add(new SetupEntry(name, false, null, iconItemId));
+		}
+		return Collections.unmodifiableList(sort(setups, alphabetical, false));
+	}
+
+	static List<SetupEntry> sort(List<SetupEntry> setups, boolean alphabetical, boolean favoritesFirst)
+	{
+		if (alphabetical)
+		{
+			setups.sort((a, b) -> String.CASE_INSENSITIVE_ORDER.compare(a.getName(), b.getName()));
+		}
+		if (favoritesFirst)
+		{
+			// stable, so favorites and the rest each keep the order they have by now
+			setups.sort((a, b) -> Boolean.compare(b.isFavorite(), a.isFavorite()));
+		}
+		return setups;
+	}
+
+	/**
+	 * Puts a setup at the front of the recently used names, which are kept latest first and capped in number.
+	 *
+	 * @return the new list, or the same one if the setup was already at the front
+	 */
+	static List<String> markUsed(List<String> recent, String name)
+	{
+		if (!recent.isEmpty() && recent.get(0).equals(name))
+		{
+			return recent;
+		}
+		final List<String> updated = new ArrayList<>(recent.size() + 1);
+		updated.add(name);
+		for (String other : recent)
+		{
+			if (!other.equals(name) && updated.size() < MAX_RECENT)
+			{
+				updated.add(other);
+			}
+		}
+		return updated;
+	}
+
+	/**
+	 * The recently used setup names saved by {@link #saveRecent}, latest first.
+	 */
+	public List<String> loadRecent()
+	{
+		try
+		{
+			final String[] names = gson.fromJson(configManager.getConfiguration(SetupPickerConfig.GROUP, SetupPickerConfig.KEY_RECENT), String[].class);
+			return names == null ? Collections.emptyList() : Arrays.asList(names);
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("Couldn't read the recently used bank tags", e);
+			return Collections.emptyList();
+		}
+	}
+
+	public void saveRecent(List<String> recent)
+	{
+		configManager.setConfiguration(SetupPickerConfig.GROUP, SetupPickerConfig.KEY_RECENT, gson.toJson(recent));
+	}
+
+	/**
+	 * Builds the list entry for a setup from its saved json. The name comes from the API, so a setup whose
+	 * json is missing or unreadable still gets listed, just without its icon, color and favorite flag.
+	 */
+	static SetupEntry parseSetup(Gson gson, String name, String json)
+	{
+		boolean favorite = false;
+		Color displayColor = null;
+		int iconItemId = -1;
+		try
+		{
+			final JsonObject setup = json == null ? null : gson.fromJson(json, JsonObject.class);
+			if (setup != null)
+			{
+				favorite = setup.has("fv") && setup.get("fv").getAsBoolean();
+				if (setup.has("dc"))
+				{
+					displayColor = gson.fromJson(setup.get("dc"), Color.class);
+				}
+				if (setup.has("iId"))
+				{
+					iconItemId = setup.get("iId").getAsInt();
+				}
+				if (iconItemId <= 0)
+				{
+					// Same fallback as Inventory Setups' icon view: the weapon
+					iconItemId = itemIdAt(setup.getAsJsonArray("eq"), EquipmentInventorySlot.WEAPON.getSlotIdx());
+				}
+			}
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("Couldn't read saved data for setup {}", name, e);
+		}
+		if (iconItemId <= 0)
+		{
+			iconItemId = ItemID._100GUIDE_GUIDECAKE;
+		}
+		return new SetupEntry(name, favorite, displayColor, iconItemId);
+	}
+
+	/**
+	 * The sections setups are grouped into, in the order of Inventory Setups' side panel. There is no API for
+	 * these, so they are read from where Inventory Setups saves them.
+	 */
+	public List<SetupSection> loadSections()
+	{
+		return parseSections(gson, configManager.getConfiguration(CONFIG_GROUP, CONFIG_KEY_SECTIONS));
+	}
+
+	/**
+	 * Reads the saved sections, skipping any that can't be made sense of.
+	 */
+	static List<SetupSection> parseSections(Gson gson, String json)
+	{
+		final List<SetupSection> sections = new ArrayList<>();
+		try
+		{
+			final JsonArray saved = json == null ? null : gson.fromJson(json, JsonArray.class);
+			if (saved == null)
+			{
+				return sections;
+			}
+			for (JsonElement element : saved)
+			{
+				if (!element.isJsonObject() || !element.getAsJsonObject().has("name"))
+				{
+					continue;
+				}
+				final JsonObject section = element.getAsJsonObject();
+				final List<String> setupNames = new ArrayList<>();
+				if (section.has("setups") && section.get("setups").isJsonArray())
+				{
+					for (JsonElement setup : section.getAsJsonArray("setups"))
+					{
+						setupNames.add(setup.getAsString());
+					}
+				}
+				final Color displayColor = section.has("displayColor") ? gson.fromJson(section.get("displayColor"), Color.class) : null;
+				sections.add(new SetupSection(section.get("name").getAsString(), displayColor, Collections.unmodifiableList(setupNames)));
+			}
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("Couldn't read the saved sections", e);
+		}
+		return sections;
+	}
+
+	/**
+	 * Lays the setups out under a heading per section, followed by the ones in no section. A setup is listed
+	 * under every section it is in. Without any sections in use, it's just the setups.
+	 *
+	 * @param setups       every setup, in the order to list them
+	 * @param alphabetical sort each section by name, rather than keeping the order it has in Inventory Setups
+	 */
+	static List<PickerRow> group(List<SetupEntry> setups, List<SetupSection> sections, boolean alphabetical, boolean favoritesFirst)
+	{
+		return group(setups, sections, alphabetical, favoritesFirst, Collections.emptyList());
+	}
+
+	/**
+	 * @param recent names of the recently used setups to list at the top, latest first. Empty for none. When
+	 *               the list is in sections they get a heading of their own and are listed in their sections
+	 *               as well; otherwise they are simply moved to the top.
+	 */
+	static List<PickerRow> group(List<SetupEntry> setups, List<SetupSection> sections, boolean alphabetical, boolean favoritesFirst,
+		List<String> recent)
+	{
+		final Map<String, SetupEntry> byName = new HashMap<>();
+		for (SetupEntry setup : setups)
+		{
+			byName.put(setup.getName(), setup);
+		}
+
+		final List<PickerRow> rows = new ArrayList<>();
+		final Set<String> assigned = new HashSet<>();
+		for (SetupSection section : sections)
+		{
+			final List<SetupEntry> members = new ArrayList<>();
+			for (String name : section.getSetupNames())
+			{
+				final SetupEntry setup = byName.get(name);
+				if (setup != null)
+				{
+					members.add(setup);
+				}
+			}
+			if (members.isEmpty())
+			{
+				continue;
+			}
+			rows.add(PickerRow.header(section));
+			for (SetupEntry setup : sort(members, alphabetical, favoritesFirst))
+			{
+				rows.add(PickerRow.of(setup));
+				assigned.add(setup.getName());
+			}
+		}
+
+		final boolean sectioned = !rows.isEmpty();
+
+		final List<PickerRow> recentRows = new ArrayList<>();
+		for (String name : recent)
+		{
+			// one that has since been deleted or renamed is just left out
+			final SetupEntry setup = byName.get(name);
+			if (setup != null)
+			{
+				recentRows.add(PickerRow.recent(setup));
+				if (!sectioned)
+				{
+					assigned.add(name);
+				}
+			}
+		}
+		if (!recentRows.isEmpty())
+		{
+			if (sectioned)
+			{
+				recentRows.add(0, PickerRow.RECENT);
+			}
+			rows.addAll(0, recentRows);
+		}
+
+		boolean unassignedHeading = false;
+		for (SetupEntry setup : setups)
+		{
+			if (assigned.contains(setup.getName()))
+			{
+				continue;
+			}
+			if (sectioned && !unassignedHeading)
+			{
+				rows.add(PickerRow.UNASSIGNED);
+				unassignedHeading = true;
+			}
+			rows.add(PickerRow.of(setup));
+		}
+		return rows;
+	}
+
+	private static int itemIdAt(JsonArray items, int index)
+	{
+		if (items == null || index >= items.size())
+		{
+			return -1;
+		}
+		// empty slots are saved as null
+		final JsonElement item = items.get(index);
+		return item.isJsonObject() && item.getAsJsonObject().has("id") ? item.getAsJsonObject().get("id").getAsInt() : -1;
+	}
+
+	/**
+	 * Name of the currently open Bank Tag, or "" when there is none or it can't be told
+	 * (the API only reports setups that filter the bank). Call on the client thread, where the reply is
+	 * synchronous.
+	 */
+	public String queryActiveSetup()
+	{
+		final String active = bankTagsService.getActiveTag();
+		return active == null ? "" : active;
+	}
+
+	/** Open a bank tag using RuneLite's public Bank Tags service. Any saved layout is applied automatically. */
+	public void open(String name)
+	{
+		bankTagsService.openBankTag(name, BankTagsService.OPTION_ALLOW_MODIFICATIONS);
+	}
+
+
+}

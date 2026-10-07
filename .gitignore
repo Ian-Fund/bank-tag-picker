@@ -1,0 +1,39 @@
+# Gradle
+.gradle/
+build/
+
+# IDE build output (Eclipse / VS Code Java)
+bin/
+
+# IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Eclipse
+.project
+.settings/
+.classpath
+
+# NetBeans
+nbactions.xml
+nb-configuration.xml
+nbproject/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Local account data and secrets
+.runelite/
+profiles/
+.env
+.env.*
+credentials*.json
